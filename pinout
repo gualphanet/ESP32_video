@@ -1,0 +1,42 @@
+=== DISPLAY ILI9341 (SPI) ===
+VCC      -> 3V3
+GND      -> GND
+LED      -> 3V3
+CS       -> GPIO 15 (D15)
+RESET    -> GPIO 4  (D4)
+DC       -> GPIO 2  (D2)
+SDI/MOSI -> GPIO 13 (D13)
+SCK      -> GPIO 14 (D14)
+SDO/MISO -> non collegato
+Touch    -> non collegato
+
+=== CAMERA OV2640 ===
+3V3   -> 3V3
+GND   -> GND
+RST   -> 3V3
+PWDN  -> GPIO 32 (D32)
+DCLK  -> GPIO 22 (D22)
+VSYNC -> GPIO 25 (D25)
+HREF  -> GPIO 23 (D23)
+SDA   -> GPIO 26 (D26)
+SCL   -> GPIO 27 (D27)
+D0    -> GPIO 5  (D5)
+D1    -> GPIO 18 (D18)
+D2    -> GPIO 19 (D19)
+D3    -> GPIO 21 (D21)
+D4    -> GPIO 36 (VP)
+D5    -> GPIO 39 (VN)
+D6    -> GPIO 34 (D34)
+D7    -> GPIO 35 (D35)
+NC    -> non collegato
+
+=== MODULO SD (in prova) ===
+VCC  -> 3V3 oppure VIN (secondo la scritta sul modulo)
+GND  -> GND
+SCK  -> GPIO 14 (D14), condiviso col display
+MOSI -> GPIO 13 (D13), condiviso col display
+MISO -> GPIO 33 (D33)
+CS   -> GPIO 17 (TX2)
+
+=== PULSANTE ===
+Scatto -> GPIO 0 (pulsante BOOT sulla scheda, nessun filo)
