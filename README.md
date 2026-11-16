@@ -11,5 +11,3 @@ modificare il file User_Setup.h in Documenti > Arduino > libraries > TFT_eSPI > 
 - fotocamera su schermo (non salva foto)
 - videocamera su schermo (non salva)
 - videocamera che trasmette via wifi
-
-habibi
