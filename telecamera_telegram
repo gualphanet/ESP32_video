@@ -1,0 +1,214 @@
+#include "esp_camera.h"
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <TFT_eSPI.h>
+
+const char* WIFI_SSID = "";
+const char* WIFI_PASS = "";
+const char* BOT_TOKEN = "";   // il token di BotFather
+const char* CHAT_ID   = "";   // il tuo ID numerico
+
+#define PIR_PIN 33
+#define ATTESA_TRA_FOTO 5000   // millisecondi tra una foto e la successiva
+
+TFT_eSPI tft = TFT_eSPI();
+
+#define PWDN_GPIO_NUM   32
+#define RESET_GPIO_NUM  -1
+#define XCLK_GPIO_NUM   16
+#define SIOD_GPIO_NUM   26
+#define SIOC_GPIO_NUM   27
+#define Y9_GPIO_NUM     35
+#define Y8_GPIO_NUM     34
+#define Y7_GPIO_NUM     39
+#define Y6_GPIO_NUM     36
+#define Y5_GPIO_NUM     21
+#define Y4_GPIO_NUM     19
+#define Y3_GPIO_NUM     18
+#define Y2_GPIO_NUM      5
+#define VSYNC_GPIO_NUM  25
+#define HREF_GPIO_NUM   23
+#define PCLK_GPIO_NUM   22
+
+unsigned long ultimaFoto = 0;
+
+void stato(const char* t, uint16_t c) {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(c, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(5, 5);
+  tft.println(t);
+}
+
+bool inviaFoto(uint8_t* dati, size_t lunghezza) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(10);
+  if (!client.connect("api.telegram.org", 443)) return false;
+
+  String head = "--ESP32\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n";
+  head += String(CHAT_ID);
+  head += "\r\n--ESP32\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"foto.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n";
+  String tail = "\r\n--ESP32--\r\n";
+  uint32_t totale = head.length() + lunghezza + tail.length();
+
+  client.print(String("POST /bot") + BOT_TOKEN + "/sendPhoto HTTP/1.1\r\n");
+  client.print("Host: api.telegram.org\r\n");
+  client.print("Content-Type: multipart/form-data; boundary=ESP32\r\n");
+  client.print("Content-Length: " + String(totale) + "\r\n");
+  client.print("Connection: close\r\n\r\n");
+  client.print(head);
+
+  size_t inviati = 0;
+  while (inviati < lunghezza) {
+    size_t blocco = lunghezza - inviati;
+    if (blocco > 1024) blocco = 1024;
+    client.write(dati + inviati, blocco);
+    inviati += blocco;
+  }
+  client.print(tail);
+
+  String risposta = "";
+  unsigned long inizio = millis();
+  while (client.connected() && millis() - inizio < 10000) {
+    while (client.available()) risposta += (char)client.read();
+  }
+  client.stop();
+  return risposta.indexOf("\"ok\":true") >= 0;
+}
+
+#define N_FOTO 3          // quante foto per raffica
+
+void inviaTesto(String t) {
+  t.replace(" ", "+");
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(10);
+  if (!client.connect("api.telegram.org", 443)) return;
+  String body = "chat_id=" + String(CHAT_ID) + "&text=" + t;
+  client.print(String("POST /bot") + BOT_TOKEN + "/sendMessage HTTP/1.1\r\n");
+  client.print("Host: api.telegram.org\r\n");
+  client.print("Content-Type: application/x-www-form-urlencoded\r\n");
+  client.print("Content-Length: " + String(body.length()) + "\r\n");
+  client.print("Connection: close\r\n\r\n");
+  client.print(body);
+  unsigned long inizio = millis();
+  while (client.connected() && millis() - inizio < 5000) {
+    while (client.available()) client.read();
+  }
+  client.stop();
+}
+
+void scattaEInvia() {
+  // se il Wi-Fi e' caduto, riconnetto
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.disconnect();
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    int t = 0;
+    while (WiFi.status() != WL_CONNECTED && t < 20) { delay(500); t++; }
+  }
+
+  // scarto un fotogramma vecchio
+  camera_fb_t* x = esp_camera_fb_get();
+  if (x) esp_camera_fb_return(x);
+
+  int inviate = 0;
+  for (int i = 0; i < N_FOTO; i++) {
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) continue;
+    bool ok = inviaFoto(fb->buf, fb->len);
+    esp_camera_fb_return(fb);
+    if (ok) inviate++;
+      inviaTesto("Inviate " + String(inviate) + " su " + String(N_FOTO) +
+             ", wifi " + String(WiFi.status() == WL_CONNECTED ? "ok" : "caduto") +
+             ", memoria " + String(ESP.getFreeHeap()));
+  }
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(5, 5);
+  tft.setTextColor(inviate > 0 ? TFT_GREEN : TFT_RED, TFT_BLACK);
+  tft.print("Inviate: ");
+  tft.print(inviate);
+  tft.print("/");
+  tft.println(N_FOTO);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.print("Wi-Fi: ");
+  tft.println(WiFi.status() == WL_CONNECTED ? "ok" : "caduto");
+  tft.print("Memoria: ");
+  tft.println(ESP.getFreeHeap());
+}
+
+void setup() {
+  pinMode(PIR_PIN, INPUT);
+
+  tft.init();
+  tft.setRotation(2);
+  stato("Avvio camera", TFT_WHITE);
+
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer   = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sccb_sda = SIOD_GPIO_NUM;
+  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = FRAMESIZE_QVGA;
+  config.jpeg_quality = 12;
+  config.fb_count = 1;
+  config.fb_location = CAMERA_FB_IN_DRAM;
+  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+
+  if (esp_camera_init(&config) != ESP_OK) { stato("Camera KO", TFT_RED); return; }
+
+  sensor_t* s = esp_camera_sensor_get();
+  s->set_saturation(s, 2);
+  // Se l'immagine e' capovolta, togli // da queste righe:
+  // s->set_vflip(s, 1);
+  // s->set_hmirror(s, 1);
+
+  stato("Wi-Fi...", TFT_WHITE);
+  WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm); // wifi più forte
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  int tentativi = 0;
+  while (WiFi.status() != WL_CONNECTED && tentativi < 40) { delay(500); tentativi++; }
+  if (WiFi.status() != WL_CONNECTED) { stato("Wi-Fi KO", TFT_RED); return; }
+
+  // il PIR ha bisogno di circa un minuto per stabilizzarsi
+  for (int i = 60; i > 0; i--) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "Riscaldo PIR\n%d s", i);
+    stato(buf, TFT_YELLOW);
+    delay(1000);
+  }
+  stato("In attesa...", TFT_WHITE);
+}
+
+bool pirPrecedente = false;
+
+void loop() {
+  bool pir = (digitalRead(PIR_PIN) == HIGH);
+
+  // scatta solo nell'istante in cui il PIR passa da spento ad acceso
+  if (pir && !pirPrecedente) {
+    scattaEInvia();
+  }
+  pirPrecedente = pir;
+
+  delay(10);
+}
